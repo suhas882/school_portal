@@ -1,4 +1,4 @@
-# Greenwood Academy - School Management System (Firebase-Free Redesign)
+# New Millennium School - School Management System (Firebase-Free Redesign)
 
 A secure, modern, responsive, and 100% free school management portal. This application completely replaces Firebase with a Node.js + Express backend, a SQLite database, local storage, and a React + Tailwind CSS frontend.
 
