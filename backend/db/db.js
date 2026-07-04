@@ -1,103 +1,82 @@
-import sqlite3 from 'sqlite3';
+import pg from 'pg';
 import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { Pool } = pg;
 
-const dbDir = path.join(__dirname, '../data');
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+const connectionString = process.env.DATABASE_URL;
 
-const dbPath = path.join(dbDir, 'school.db');
-export let db = new sqlite3.Database(dbPath);
-
-// Enable foreign key support
-db.serialize(() => {
-  db.run('PRAGMA foreign_keys = ON;');
+export const pool = new Pool({
+  connectionString,
+  ssl: connectionString && !connectionString.includes('localhost') && !connectionString.includes('127.0.0.1')
+    ? { rejectUnauthorized: false }
+    : false
 });
 
-export function closeDatabase() {
-  return new Promise((resolve, reject) => {
-    db.close((err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
+export async function closeDatabase() {
+  // Stub for PostgreSQL connection lifecycle mapping
+  return Promise.resolve();
 }
 
-export function openDatabase() {
-  return new Promise((resolve, reject) => {
-    db = new sqlite3.Database(dbPath, (err) => {
-      if (err) return reject(err);
-      db.run('PRAGMA foreign_keys = ON;', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-  });
+export async function openDatabase() {
+  // Stub for PostgreSQL connection lifecycle mapping
+  return Promise.resolve();
 }
 
-// Helper functions wrapping sqlite3 in Promises
+// Promisified query helper interface matching SQLite structure
 export const query = {
-  run(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      db.run(sql, params, function (err) {
-        if (err) reject(err);
-        else resolve({ id: this.lastID, changes: this.changes });
-      });
-    });
+  async run(sql, params = []) {
+    const client = await pool.connect();
+    try {
+      const res = await client.query(sql, params);
+      const firstRow = res.rows && res.rows[0];
+      return {
+        id: firstRow && firstRow.id !== undefined ? firstRow.id : null,
+        changes: res.rowCount,
+        rows: res.rows
+      };
+    } finally {
+      client.release();
+    }
   },
-  get(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      db.get(sql, params, (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+  async get(sql, params = []) {
+    const client = await pool.connect();
+    try {
+      const res = await client.query(sql, params);
+      return res.rows[0] || null;
+    } finally {
+      client.release();
+    }
   },
-  all(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      db.all(sql, params, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+  async all(sql, params = []) {
+    const client = await pool.connect();
+    try {
+      const res = await client.query(sql, params);
+      return res.rows;
+    } finally {
+      client.release();
+    }
   },
-  exec(sql) {
-    return new Promise((resolve, reject) => {
-      db.exec(sql, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+  async exec(sql) {
+    const client = await pool.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      client.release();
+    }
   }
 };
 
 // Database Schema Initialization
 export async function initDb() {
-  // Check if upgrade is needed (e.g., payments table does not exist)
+  // Safe migrations check: check if payments table exists in Postgres public schema
   try {
     const tableCheck = await query.get(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='payments'"
+      "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='payments'"
     );
     if (!tableCheck) {
-      console.log('Upgraded schema detected. Dropping old tables to recreate with fee ledger...');
-      await query.exec('DROP TABLE IF EXISTS attachments;');
-      await query.exec('DROP TABLE IF EXISTS homework;');
-      await query.exec('DROP TABLE IF EXISTS students;');
-      await query.exec('DROP TABLE IF EXISTS subjects;');
-      await query.exec('DROP TABLE IF EXISTS sections;');
-      await query.exec('DROP TABLE IF EXISTS classes;');
-      await query.exec('DROP TABLE IF EXISTS parents;');
-      await query.exec('DROP TABLE IF EXISTS admins;');
-      await query.exec('DROP TABLE IF EXISTS notices;');
-      await query.exec('DROP TABLE IF EXISTS school_info;');
-      await query.exec('DROP TABLE IF EXISTS activity_logs;');
-      await query.exec('DROP TABLE IF EXISTS expenses;');
+      console.log('PostgreSQL schema initializing...');
     }
   } catch (err) {
     console.error('Error verifying database migrations state:', err);
@@ -105,54 +84,54 @@ export async function initDb() {
 
   const schema = `
     CREATE TABLE IF NOT EXISTS classes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      day_scholar_fee REAL NOT NULL DEFAULT 0,
-      hostel_student_fee REAL NOT NULL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      day_scholar_fee DOUBLE PRECISION NOT NULL DEFAULT 0,
+      hostel_student_fee DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS sections (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
       class_id INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
       UNIQUE(name, class_id)
     );
 
     CREATE TABLE IF NOT EXISTS subjects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
       class_id INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
       UNIQUE(name, class_id)
     );
 
     CREATE TABLE IF NOT EXISTS parents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      phone TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) NOT NULL UNIQUE,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      phone VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS students (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      roll_number TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      roll_number VARCHAR(255) NOT NULL,
       class_id INTEGER NOT NULL,
       section_id INTEGER NOT NULL,
       parent_id INTEGER,
-      type TEXT CHECK(type IN ('Day Scholar', 'Hostel Student')) NOT NULL DEFAULT 'Day Scholar',
-      fee_amount REAL NOT NULL DEFAULT 0,
-      concession REAL NOT NULL DEFAULT 0,
-      fee_after_concession REAL NOT NULL DEFAULT 0,
-      remaining_balance REAL NOT NULL DEFAULT 0,
-      payment_status TEXT CHECK(payment_status IN ('Pending', 'Paid')) NOT NULL DEFAULT 'Pending',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      type VARCHAR(50) CHECK(type IN ('Day Scholar', 'Hostel Student')) NOT NULL DEFAULT 'Day Scholar',
+      fee_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+      concession DOUBLE PRECISION NOT NULL DEFAULT 0,
+      fee_after_concession DOUBLE PRECISION NOT NULL DEFAULT 0,
+      remaining_balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+      payment_status VARCHAR(50) CHECK(payment_status IN ('Pending', 'Paid')) NOT NULL DEFAULT 'Pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE RESTRICT,
       FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE RESTRICT,
       FOREIGN KEY(parent_id) REFERENCES parents(id) ON DELETE SET NULL,
@@ -160,40 +139,40 @@ export async function initDb() {
     );
 
     CREATE TABLE IF NOT EXISTS payments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       student_id INTEGER NOT NULL,
-      amount REAL NOT NULL,
+      amount DOUBLE PRECISION NOT NULL,
       date DATE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      item_name TEXT NOT NULL,
-      amount REAL NOT NULL,
+      id SERIAL PRIMARY KEY,
+      item_name VARCHAR(255) NOT NULL,
+      amount DOUBLE PRECISION NOT NULL,
       date DATE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS admins (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) NOT NULL UNIQUE,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS homework (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       class_id INTEGER NOT NULL,
       section_id INTEGER NOT NULL,
       subject_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
+      title VARCHAR(255) NOT NULL,
       description TEXT NOT NULL,
       due_date DATE NOT NULL,
       created_by INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
       FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE CASCADE,
       FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
@@ -201,59 +180,53 @@ export async function initDb() {
     );
 
     CREATE TABLE IF NOT EXISTS attachments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       homework_id INTEGER NOT NULL,
-      file_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      file_type TEXT,
+      file_name VARCHAR(255) NOT NULL,
+      file_path VARCHAR(500) NOT NULL,
+      file_type VARCHAR(255),
       file_size INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(homework_id) REFERENCES homework(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS notices (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
       content TEXT NOT NULL,
-      audience TEXT CHECK(audience IN ('all', 'parents', 'admins')) NOT NULL DEFAULT 'all',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      audience VARCHAR(50) CHECK(audience IN ('all', 'parents', 'admins')) NOT NULL DEFAULT 'all',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS school_info (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      name TEXT NOT NULL DEFAULT 'New Millennium School',
-      address TEXT,
-      phone TEXT,
-      email TEXT,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      name VARCHAR(255) NOT NULL DEFAULT 'New Millennium School',
+      address VARCHAR(500),
+      phone VARCHAR(50),
+      email VARCHAR(255),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS activity_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_type TEXT CHECK(user_type IN ('admin', 'parent')) NOT NULL,
+      id SERIAL PRIMARY KEY,
+      user_type VARCHAR(50) CHECK(user_type IN ('admin', 'parent')) NOT NULL,
       user_id INTEGER NOT NULL,
-      action TEXT NOT NULL,
+      action VARCHAR(255) NOT NULL,
       details TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-
-    CREATE INDEX IF NOT EXISTS idx_students_parent ON students(parent_id);
-    CREATE INDEX IF NOT EXISTS idx_students_class ON students(class_id);
-    CREATE INDEX IF NOT EXISTS idx_homework_class_section ON homework(class_id, section_id);
-    CREATE INDEX IF NOT EXISTS idx_activity_logs_time ON activity_logs(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_payments_student ON payments(student_id);
   `;
 
   await query.exec(schema);
 
   // Seed default admin if none exists
   const adminCount = await query.get('SELECT COUNT(*) as count FROM admins');
-  if (adminCount.count === 0) {
+  if (parseInt(adminCount.count) === 0) {
     const defaultPassword = 'admin123';
     const salt = bcrypt.genSaltSync(10);
     const hash = bcrypt.hashSync(defaultPassword, salt);
     await query.run(
-      'INSERT INTO admins (username, email, password_hash) VALUES (?, ?, ?)',
+      'INSERT INTO admins (username, email, password_hash) VALUES ($1, $2, $3)',
       ['admin', 'admin@school.com', hash]
     );
     console.log(`Default admin seeded. User: admin, Password: ${defaultPassword}`);
@@ -261,19 +234,18 @@ export async function initDb() {
 
   // Seed default school info if none exists
   const infoCount = await query.get('SELECT COUNT(*) as count FROM school_info');
-  if (infoCount.count === 0) {
+  if (parseInt(infoCount.count) === 0) {
     await query.run(
-      'INSERT INTO school_info (id, name, address, phone, email) VALUES (1, ?, ?, ?, ?)',
+      'INSERT INTO school_info (id, name, address, phone, email) VALUES (1, $1, $2, $3, $4)',
       ['New Millennium School', '123 Education Lane, Springfield', '555-0199', 'info@millennium.edu']
     );
   } else {
-    // If it exists, update it to the new rebranded name
-    await query.run('UPDATE school_info SET name = ? WHERE id = 1', ['New Millennium School']);
+    await query.run('UPDATE school_info SET name = $1 WHERE id = 1', ['New Millennium School']);
   }
 
   // Seed starting classes if they don't exist
   const classCount = await query.get('SELECT COUNT(*) as count FROM classes');
-  if (classCount.count === 0) {
+  if (parseInt(classCount.count) === 0) {
     const baseClasses = [
       { name: 'Nursery', day: 4000, hostel: 8000 },
       { name: 'LKG', day: 4500, hostel: 9000 },
@@ -291,19 +263,20 @@ export async function initDb() {
     ];
     for (const item of baseClasses) {
       const classResult = await query.run(
-        'INSERT INTO classes (name, day_scholar_fee, hostel_student_fee) VALUES (?, ?, ?)',
+        'INSERT INTO classes (name, day_scholar_fee, hostel_student_fee) VALUES ($1, $2, $3) RETURNING id',
         [item.name, item.day, item.hostel]
       );
+      const classId = classResult.id;
       // For each class, seed sections A and B
-      await query.run('INSERT INTO sections (name, class_id) VALUES (?, ?)', ['A', classResult.id]);
-      await query.run('INSERT INTO sections (name, class_id) VALUES (?, ?)', ['B', classResult.id]);
+      await query.run('INSERT INTO sections (name, class_id) VALUES ($1, $2)', ['A', classId]);
+      await query.run('INSERT INTO sections (name, class_id) VALUES ($1, $2)', ['B', classId]);
       // Seed default subjects
-      await query.run('INSERT INTO subjects (name, class_id) VALUES (?, ?)', ['English', classResult.id]);
-      await query.run('INSERT INTO subjects (name, class_id) VALUES (?, ?)', ['Mathematics', classResult.id]);
-      await query.run('INSERT INTO subjects (name, class_id) VALUES (?, ?)', ['Science', classResult.id]);
+      await query.run('INSERT INTO subjects (name, class_id) VALUES ($1, $2)', ['English', classId]);
+      await query.run('INSERT INTO subjects (name, class_id) VALUES ($1, $2)', ['Mathematics', classId]);
+      await query.run('INSERT INTO subjects (name, class_id) VALUES ($1, $2)', ['Science', classId]);
     }
     console.log('Seeded standard starting classes (with fees), sections, and subjects.');
   }
 }
 
-export default db;
+export default pool;

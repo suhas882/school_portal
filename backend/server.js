@@ -102,7 +102,7 @@ app.use((err, req, res, next) => {
 // Database initialization & server launch
 async function startServer() {
   try {
-    console.log('Initializing SQLite database...');
+    console.log('Initializing PostgreSQL database...');
     await initDb();
     console.log('Database initialized successfully.');
     

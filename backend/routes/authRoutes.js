@@ -7,7 +7,6 @@ import { logActivity } from '../utils/logger.js';
 
 const router = express.Router();
 
-
 // Admin Login
 router.post('/admin/login', async (req, res) => {
   const { username, password } = req.body;
@@ -18,7 +17,7 @@ router.post('/admin/login', async (req, res) => {
 
   try {
     const admin = await query.get(
-      'SELECT * FROM admins WHERE username = ? OR email = ?',
+      'SELECT * FROM admins WHERE username = $1 OR email = $2',
       [username, username]
     );
 
@@ -63,7 +62,7 @@ router.post('/parent/login', async (req, res) => {
 
   try {
     const parent = await query.get(
-      'SELECT * FROM parents WHERE username = ? OR email = ?',
+      'SELECT * FROM parents WHERE username = $1 OR email = $2',
       [username, username]
     );
 
@@ -119,7 +118,7 @@ router.post('/change-password', authenticate, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user role' });
     }
 
-    userRecord = await query.get(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+    userRecord = await query.get(`SELECT * FROM ${table} WHERE id = $1`, [id]);
     if (!userRecord) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -132,7 +131,7 @@ router.post('/change-password', authenticate, async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const newHash = await bcrypt.hash(newPassword, salt);
 
-    await query.run(`UPDATE ${table} SET password_hash = ? WHERE id = ?`, [newHash, id]);
+    await query.run(`UPDATE ${table} SET password_hash = $1 WHERE id = $2`, [newHash, id]);
     await logActivity(role, id, 'Password Changed', 'User updated password');
 
     res.json({ message: 'Password changed successfully' });
@@ -154,7 +153,7 @@ router.get('/school-info', async (req, res) => {
 // Get Parent Profile & Children Billing Details
 router.get('/parent/profile', authenticate, authorizeRole(['parent']), async (req, res) => {
   try {
-    const parent = await query.get('SELECT id, username, email, phone FROM parents WHERE id = ?', [req.user.id]);
+    const parent = await query.get('SELECT id, username, email, phone FROM parents WHERE id = $1', [req.user.id]);
     if (!parent) {
       return res.status(404).json({ message: 'Parent profile not found' });
     }
@@ -165,7 +164,7 @@ router.get('/parent/profile', authenticate, authorizeRole(['parent']), async (re
        FROM students s
        JOIN classes c ON s.class_id = c.id
        JOIN sections sec ON s.section_id = sec.id
-       WHERE s.parent_id = ?`,
+       WHERE s.parent_id = $1`,
       [req.user.id]
     );
 
@@ -182,15 +181,15 @@ router.get('/parent/students/:studentId/payments', authenticate, authorizeRole([
   try {
     // Security check: Validate linkage
     const linkCheck = await query.get(
-      'SELECT COUNT(*) as count FROM students WHERE id = ? AND parent_id = ?',
+      'SELECT COUNT(*) as count FROM students WHERE id = $1 AND parent_id = $2',
       [studentId, req.user.id]
     );
-    if (linkCheck.count === 0) {
+    if (parseInt(linkCheck.count) === 0) {
       return res.status(403).json({ message: 'Access denied: Student is not linked to your account' });
     }
 
     const payments = await query.all(
-      'SELECT * FROM payments WHERE student_id = ? ORDER BY date DESC, created_at DESC',
+      'SELECT * FROM payments WHERE student_id = $1 ORDER BY date DESC, created_at DESC',
       [studentId]
     );
     res.json(payments);
