@@ -144,7 +144,7 @@ The database utilizes foreign keys and indexing. The schema contains the followi
 3.  Ensure `.env` contains:
     ```env
     PORT=5000
-    JWT_SECRET=greenwood-academy-secure-session-signing-token-98231
+    JWT_SECRET=new-Millennium-School-academy-secure-session-signing-token-98231
     NODE_ENV=development
     ```
 4.  Start backend server:
